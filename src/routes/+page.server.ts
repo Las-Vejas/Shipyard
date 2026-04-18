@@ -1,24 +1,27 @@
 import type { PageServerLoad } from './$types';
 
-import { fetchBuildApprovedProjects } from '$lib/server/forge';
+import { fetchBuildApprovedProjects, rankPopularProjects } from '$lib/server/forge';
+import { fetchBuildApprovedProjectsFromSupabase } from '$lib/server/projects';
 
 export const load: PageServerLoad = async () => {
 	try {
-		const projects = await fetchBuildApprovedProjects(24);
-
-		const popularProjects = [...projects].sort((a, b) => {
-			const byHours = (b.total_hours ?? 0) - (a.total_hours ?? 0);
-			if (byHours !== 0) return byHours;
-
-			const byDevlogs = (b.devlog_count ?? 0) - (a.devlog_count ?? 0);
-			if (byDevlogs !== 0) return byDevlogs;
-
-			return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-		});
+		const projects = await fetchBuildApprovedProjectsFromSupabase(1000);
+		const popularProjects = rankPopularProjects(projects);
 
 		return { popularProjects, loadError: null };
 	} catch (error) {
-		console.error('Failed to load popular projects', error);
-		return { popularProjects: [], loadError: 'Could not load projects right now.' };
+		console.error('Failed to load popular projects from Supabase, falling back to Forge', error);
+
+		try {
+			const projects = await fetchBuildApprovedProjects(1000);
+			const popularProjects = rankPopularProjects(projects);
+			return {
+				popularProjects,
+				loadError: 'Loaded from Forge fallback while Supabase was unavailable.'
+			};
+		} catch (fallbackError) {
+			console.error('Failed to load popular projects fallback', fallbackError);
+			return { popularProjects: [], loadError: 'Could not load projects right now.' };
+		}
 	}
 };

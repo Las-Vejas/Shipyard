@@ -2,7 +2,8 @@ import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 
 import { auth } from '$lib/auth';
-import { fetchBuildApprovedProjects } from '$lib/server/forge';
+import { fetchBuildApprovedProjects, filterShippedProjectsByUserName } from '$lib/server/forge';
+import { fetchShippedProjectsForDisplayName } from '$lib/server/projects';
 
 export const load: PageServerLoad = async ({ request }) => {
 	const authSession = await auth.api.getSession({ headers: request.headers });
@@ -10,13 +11,8 @@ export const load: PageServerLoad = async ({ request }) => {
 		throw redirect(302, '/');
 	}
 
-	const userName = (authSession.user.name ?? '').trim().toLowerCase();
-
 	try {
-		const allApproved = await fetchBuildApprovedProjects(100);
-		const shippedProjects = allApproved
-			.filter((project) => project.user.display_name.trim().toLowerCase() === userName)
-			.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+		const shippedProjects = await fetchShippedProjectsForDisplayName(authSession.user.name, 100);
 
 		return {
 			shippedProjects,
@@ -24,11 +20,23 @@ export const load: PageServerLoad = async ({ request }) => {
 			loadError: null
 		};
 	} catch (error) {
-		console.error('Failed to load user shipped projects', error);
-		return {
-			shippedProjects: [],
-			viewerName: authSession.user.name,
-			loadError: 'Could not load your shipped projects right now.'
-		};
+		console.error('Failed to load user shipped projects from Supabase, falling back to Forge', error);
+
+		try {
+			const allApproved = await fetchBuildApprovedProjects(100);
+			const shippedProjects = filterShippedProjectsByUserName(allApproved, authSession.user.name);
+			return {
+				shippedProjects,
+				viewerName: authSession.user.name,
+				loadError: 'Loaded from Forge fallback while Supabase was unavailable.'
+			};
+		} catch (fallbackError) {
+			console.error('Failed to load user shipped projects fallback', fallbackError);
+			return {
+				shippedProjects: [],
+				viewerName: authSession.user.name,
+				loadError: 'Could not load your shipped projects right now.'
+			};
+		}
 	}
 };
