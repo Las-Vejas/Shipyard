@@ -15,6 +15,34 @@ const memoryDb = {
 const supabaseUrl = env.SUPABASE_URL ?? PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
 
+const deploymentUrl = env.BETTER_AUTH_URL ?? (env.VERCEL_URL ? `https://${env.VERCEL_URL}` : undefined);
+
+let deploymentHost: string | null = null;
+let deploymentOrigin: string | null = null;
+let deploymentProtocol: 'http' | 'https' = 'http';
+
+if (deploymentUrl) {
+	try {
+		const parsed = new URL(deploymentUrl);
+		deploymentHost = parsed.host;
+		deploymentOrigin = parsed.origin;
+		deploymentProtocol = parsed.protocol === 'https:' ? 'https' : 'http';
+	} catch {
+		console.warn('BETTER_AUTH_URL is not a valid URL; falling back to localhost auth host settings.');
+	}
+}
+
+const allowedHosts = ['localhost', '127.0.0.1', ...(deploymentHost ? [deploymentHost] : [])];
+
+const trustedOrigins = [
+	env.BETTER_AUTH_URL,
+	deploymentOrigin,
+	'http://localhost:5173',
+	'http://127.0.0.1:5173',
+	'http://localhost:5137',
+	'http://127.0.0.1:5137'
+].filter((origin): origin is string => Boolean(origin));
+
 const supabaseAdmin =
 	supabaseUrl && supabaseServiceRoleKey
 		? createClient(supabaseUrl, supabaseServiceRoleKey, {
@@ -41,17 +69,11 @@ function decodeJwtPayload(token: string | null | undefined): Record<string, unkn
 export const auth = betterAuth({
 	secret: env.BETTER_AUTH_SECRET,
 	baseURL: {
-		allowedHosts: ['localhost', '127.0.0.1'],
+		allowedHosts,
 		fallback: env.BETTER_AUTH_URL,
-		protocol: 'http'
+		protocol: deploymentProtocol
 	},
-	trustedOrigins: [
-		env.BETTER_AUTH_URL,
-		'http://localhost:5173',
-		'http://127.0.0.1:5173',
-		'http://localhost:5137',
-		'http://127.0.0.1:5137'
-	],
+	trustedOrigins,
 	databaseHooks: {
 		session: {
 			create: {

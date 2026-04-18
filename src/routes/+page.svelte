@@ -111,6 +111,39 @@
 
 		return null;
 	}
+
+	function getGitHubOwnerFromRepo(repoLink: string | null | undefined): string | null {
+		if (!repoLink) return null;
+
+		try {
+			const url = new URL(repoLink);
+			if (url.hostname !== 'github.com') return null;
+
+			const parts = url.pathname.split('/').filter(Boolean);
+			if (!parts.length) return null;
+
+			return parts[0];
+		} catch {
+			return null;
+		}
+	}
+
+	function getBuilderProfileLink(project: PageData['popularProjects'][number]): string | null {
+		const owner = getGitHubOwnerFromRepo(project.repo_link);
+		return owner ? `https://github.com/${owner}` : null;
+	}
+
+	function getBuilderLabel(project: PageData['popularProjects'][number]): string {
+		const displayName = project.user.display_name?.trim() ?? '';
+		if (displayName && displayName.toLowerCase() !== 'unknown builder') {
+			return displayName;
+		}
+
+		const owner = getGitHubOwnerFromRepo(project.repo_link);
+		if (owner) return `@${owner}`;
+
+		return 'Builder unavailable';
+	}
 </script>
 
 <section class="mx-auto flex max-w-6xl flex-col gap-8">
@@ -202,7 +235,21 @@
 						{#if project.subtitle}
 							<p class="text-sm text-slate-600">{project.subtitle}</p>
 						{/if}
-						<p class="text-xs text-slate-500">by {project.user.display_name}</p>
+						<p class="text-xs text-slate-500">
+							by
+							{#if getBuilderProfileLink(project)}
+								<a
+									href={getBuilderProfileLink(project) ?? undefined}
+									target="_blank"
+									rel="noreferrer"
+									class="text-slate-700 underline decoration-slate-300 underline-offset-2 hover:text-slate-900"
+								>
+									{getBuilderLabel(project)}
+								</a>
+							{:else}
+								{getBuilderLabel(project)}
+							{/if}
+						</p>
 						<p class="text-xs text-slate-500">
 							Hours: {project.total_hours ?? 0} • Devlogs: {project.devlog_count}
 						</p>

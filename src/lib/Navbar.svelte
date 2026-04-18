@@ -5,10 +5,14 @@
 	let profileMenuOpen = $state(false);
 
 	async function signInWithHackClub() {
-		await authClient.signIn.oauth2({
-			providerId: 'hackclub',
-			callbackURL: '/'
-		});
+		try {
+			await authClient.signIn.oauth2({
+				providerId: 'hackclub',
+				callbackURL: '/'
+			});
+		} catch (error) {
+			console.error('Hack Club OAuth sign-in failed', error);
+		}
 	}
 
 	async function signOut() {
