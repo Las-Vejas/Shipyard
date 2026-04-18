@@ -1,168 +1,28 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import type { Session, User, UserIdentity } from '@supabase/supabase-js';
-	import { supabase } from '$lib/supabaseClient';
+	import { authClient } from '$lib/auth-client';
 
-	let session = $state<Session | null>(null);
-	let user = $state<User | null>(null);
-	let identities = $state<UserIdentity[]>([]);
-	let avatarUrl = $state('');
-	const fallbackAvatar = 'https://cachet.dunkirk.sh/users/unknown/r';
-	const slackIdPattern = /^[UW][A-Z0-9]{7,}$/;
+	const session = authClient.useSession();
+	let profileMenuOpen = $state(false);
 
-	function getDirectAvatarUrl(currentUser: User) {
-		const metadata = currentUser.user_metadata ?? {};
-		const candidates = [
-			metadata.avatar_url,
-			metadata.picture,
-			metadata.image,
-			metadata.image_url,
-			metadata.profile_image
-		];
-
-		for (const candidate of candidates) {
-			if (typeof candidate === 'string' && candidate.startsWith('http')) {
-				return candidate;
-			}
-		}
-
-		return '';
-	}
-
-	function getMetadataSlackId(currentUser: User) {
-		const value = currentUser.user_metadata?.slack_id;
-		if (typeof value === 'string' && value) return value;
-
-		const sub = currentUser.user_metadata?.sub;
-		if (typeof sub === 'string' && slackIdPattern.test(sub)) return sub;
-
-		return '';
-	}
-
-	function findSlackIdInIdentityData(data: Record<string, unknown> | undefined) {
-		if (!data) return '';
-
-		const priorityKeys = ['slack_id', 'slack_user_id', 'user_id', 'id', 'sub'];
-		for (const key of priorityKeys) {
-			const value = data[key];
-			if (typeof value === 'string' && (slackIdPattern.test(value) || key.includes('slack'))) {
-				return value;
-			}
-		}
-
-		for (const [key, value] of Object.entries(data)) {
-			if (typeof value === 'string' && key.toLowerCase().includes('slack') && value) {
-				return value;
-			}
-		}
-
-		return '';
-	}
-
-	function getSlackUserId(currentUser: User, linkedIdentities: UserIdentity[]) {
-		const metadataSlackId = getMetadataSlackId(currentUser);
-		if (metadataSlackId) return metadataSlackId;
-
-		const allIdentities = [...(currentUser.identities ?? []), ...linkedIdentities];
-		const identity = allIdentities.find((item) => {
-			const provider = item.provider.toLowerCase();
-			return provider === 'slack_oidc' || provider === 'slack' || provider === 'custom:hackclub';
+	async function signInWithHackClub() {
+		await authClient.signIn.oauth2({
+			providerId: 'hackclub',
+			callbackURL: '/'
 		});
-
-		if (identity?.identity_data) {
-			return findSlackIdInIdentityData(identity.identity_data as Record<string, unknown>);
-		}
-
-		for (const item of allIdentities) {
-			const value = findSlackIdInIdentityData((item.identity_data ?? {}) as Record<string, unknown>);
-			if (value) return value;
-		}
-
-		return '';
 	}
-
-	async function loadAvatar(currentUser: User | null, linkedIdentities: UserIdentity[]) {
-		if (currentUser) {
-			const directAvatar = getDirectAvatarUrl(currentUser);
-			if (directAvatar) {
-				avatarUrl = directAvatar;
-				return;
-			}
-		}
-
-		const slackUserId = currentUser ? getSlackUserId(currentUser, linkedIdentities) : '';
-
-		if (!slackUserId) {
-			avatarUrl = '';
-			return;
-		}
-
-		try {
-			const response = await fetch(`https://cachet.dunkirk.sh/users/${encodeURIComponent(slackUserId)}`);
-
-			if (!response.ok) {
-				avatarUrl = `https://cachet.dunkirk.sh/users/${encodeURIComponent(slackUserId)}/r`;
-				return;
-			}
-
-			const data = await response.json();
-			avatarUrl = data.imageUrl ?? `https://cachet.dunkirk.sh/users/${encodeURIComponent(slackUserId)}/r`;
-		} catch {
-			avatarUrl = `https://cachet.dunkirk.sh/users/${encodeURIComponent(slackUserId)}/r`;
-		}
-	}
-
-	async function refreshCurrentUser() {
-		const [{ data: userData }, { data: identitiesData }] = await Promise.all([
-			supabase.auth.getUser(),
-			supabase.auth.getUserIdentities()
-		]);
-
-		user = userData.user;
-		identities = identitiesData?.identities ?? [];
-		await loadAvatar(user, identities);
-	}
-
-	onMount(() => {
-		const init = async () => {
-			const [{ data: sessionData }, { data: userData }, { data: identitiesData }] = await Promise.all([
-				supabase.auth.getSession(),
-				supabase.auth.getUser(),
-				supabase.auth.getUserIdentities()
-			]);
-
-			session = sessionData.session;
-			user = userData.user;
-			identities = identitiesData?.identities ?? [];
-			await loadAvatar(user, identities);
-		};
-
-		void init();
-
-		const {
-			data: { subscription }
-		} = supabase.auth.onAuthStateChange((_event, nextSession) => {
-			session = nextSession;
-			if (!nextSession) {
-				user = null;
-				identities = [];
-				avatarUrl = '';
-				return;
-			}
-
-			void refreshCurrentUser();
-		});
-
-		return () => subscription.unsubscribe();
-	});
 
 	async function signOut() {
-		await supabase.auth.signOut();
+		profileMenuOpen = false;
+		await authClient.signOut();
 	}
 
-	function handleAvatarError() {
-		if (!avatarUrl || avatarUrl.endsWith('/unknown/r')) return;
-		avatarUrl = fallbackAvatar;
+	function toggleProfileMenu() {
+		profileMenuOpen = !profileMenuOpen;
+	}
+
+	function getAvatarUrl(user: { image?: string | null } | null | undefined): string | null {
+		const withCustomAvatar = user as ({ avatar_url?: string | null; image?: string | null } | null | undefined);
+		return withCustomAvatar?.avatar_url ?? withCustomAvatar?.image ?? null;
 	}
 </script>
 
@@ -173,28 +33,58 @@
 		</a>
 
 		<div class="flex items-center gap-3 text-sm">
-			<a href="#countries" class="rounded-full px-4 py-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900">
-				Countries
+			<a href="/" class="rounded-full px-4 py-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900">
+				Home
 			</a>
-			{#if session}
-				{#if avatarUrl}
-					<img
-						src={avatarUrl}
-						onerror={handleAvatarError}
-						alt={user?.email ?? 'Signed in user'}
-						class="h-9 w-9 rounded-full border border-slate-200 object-cover"
-					/>
-				{/if}
-				<button class="rounded-full bg-slate-900 px-4 py-2 font-medium text-white transition hover:bg-slate-700" onclick={signOut}>
-					Log out
-				</button>
-			{:else}
-				<a
-					href="/login"
-					class="rounded-full bg-slate-900 px-4 py-2 font-medium text-white transition hover:bg-slate-700"
-				>
-					Log in
+
+			{#if $session.data?.user}
+				<a href="/dashboard" class="rounded-full px-4 py-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900">
+					Dashboard
 				</a>
+			{/if}
+
+			{#if $session.data?.user}
+				<div class="relative">
+					<button
+						type="button"
+						onclick={toggleProfileMenu}
+						class="flex items-center gap-2 rounded-full border border-slate-200 px-2 py-1 text-slate-700 transition hover:bg-slate-100"
+					>
+						{#if getAvatarUrl($session.data.user)}
+							<img
+								src={getAvatarUrl($session.data.user) ?? undefined}
+								alt="Profile"
+								class="h-8 w-8 rounded-full object-cover"
+							/>
+						{:else}
+							<div class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-white">
+								{$session.data.user.name?.slice(0, 1).toUpperCase() ?? '?'}
+							</div>
+						{/if}
+
+						<span class="hidden pr-1 text-slate-600 sm:inline">{$session.data.user.name}</span>
+					</button>
+
+					{#if profileMenuOpen}
+						<div class="absolute top-12 right-0 z-50 min-w-40 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+							<button
+								type="button"
+								onclick={signOut}
+								class="w-full rounded-lg px-3 py-2 text-left text-slate-700 transition hover:bg-slate-100"
+							>
+								Sign out
+							</button>
+						</div>
+					{/if}
+				</div>
+			{:else}
+				<button
+					type="button"
+					onclick={signInWithHackClub}
+					class="rounded-full bg-slate-900 px-4 py-2 text-white transition hover:bg-slate-700"
+				>
+					Continue with Hack Club
+				</button>
 			{/if}
 		</div>
 	</div>

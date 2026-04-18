@@ -4,25 +4,23 @@
 	let { data }: { data: PageData } = $props();
 </script>
 
-<section class="mx-auto flex max-w-6xl flex-col gap-8">
-	<header class="space-y-3">
-		<h1 class="text-4xl font-semibold text-slate-900 sm:text-5xl">Most Popular Projects</h1>
-		<p class="max-w-2xl text-base text-slate-600 sm:text-lg">
-			Showing Forge projects with build approved status, ranked by activity.
-		</p>
+<section class="mx-auto flex max-w-6xl flex-col gap-6">
+	<header class="space-y-2">
+		<h1 class="text-3xl font-semibold text-slate-900">Your Shipped Projects</h1>
+		<p class="text-slate-600">Projects from Forge marked as build approved and attributed to {data.viewerName}.</p>
 	</header>
 
 	{#if data.loadError}
 		<p class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{data.loadError}</p>
 	{/if}
 
-	{#if data.popularProjects.length === 0}
+	{#if data.shippedProjects.length === 0}
 		<div class="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-600">
-			No popular projects available right now.
+			No shipped projects found yet.
 		</div>
 	{:else}
-		<div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-			{#each data.popularProjects as project}
+		<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+			{#each data.shippedProjects as project}
 				<article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
 					{#if project.cover_image_url}
 						<img src={project.cover_image_url} alt={project.name} class="h-44 w-full object-cover" />
@@ -32,10 +30,7 @@
 						{#if project.subtitle}
 							<p class="text-sm text-slate-600">{project.subtitle}</p>
 						{/if}
-						<p class="text-xs text-slate-500">by {project.user.display_name}</p>
-						<p class="text-xs text-slate-500">
-							Hours: {project.total_hours ?? 0} • Devlogs: {project.devlog_count}
-						</p>
+						<p class="text-xs text-slate-500">Tier: {project.tier.replace('_', ' ')}</p>
 					</div>
 				</article>
 			{/each}
