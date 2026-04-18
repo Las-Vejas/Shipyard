@@ -6,11 +6,20 @@
 	let session = $state<Session | null>(null);
 	let user = $state<User | null>(null);
 	let avatarUrl = $state('');
+	const fallbackAvatar = 'https://cachet.dunkirk.sh/users/unknown/r';
+
+	function getMetadataSlackId(currentUser: User) {
+		const value = currentUser.user_metadata?.slack_id;
+		return typeof value === 'string' ? value : '';
+	}
 
 	function getSlackUserId(currentUser: User) {
+		const metadataSlackId = getMetadataSlackId(currentUser);
+		if (metadataSlackId) return metadataSlackId;
+
 		const identity = currentUser.identities?.find((item) => {
 			const provider = item.provider.toLowerCase();
-			return provider.includes('slack') || provider.startsWith('custom:');
+			return provider === 'slack_oidc' || provider === 'slack' || provider === 'custom:hackclub';
 		});
 
 		return (
@@ -30,15 +39,25 @@
 			return;
 		}
 
-		const response = await fetch(`https://cachet.dunkirk.sh/users/${encodeURIComponent(slackUserId)}`);
+		try {
+			const response = await fetch(`https://cachet.dunkirk.sh/users/${encodeURIComponent(slackUserId)}`);
 
-		if (!response.ok) {
+			if (!response.ok) {
+				avatarUrl = `https://cachet.dunkirk.sh/users/${encodeURIComponent(slackUserId)}/r`;
+				return;
+			}
+
+			const data = await response.json();
+			avatarUrl = data.imageUrl ?? `https://cachet.dunkirk.sh/users/${encodeURIComponent(slackUserId)}/r`;
+		} catch {
 			avatarUrl = `https://cachet.dunkirk.sh/users/${encodeURIComponent(slackUserId)}/r`;
-			return;
 		}
+	}
 
-		const data = await response.json();
-		avatarUrl = data.imageUrl ?? `https://cachet.dunkirk.sh/users/${encodeURIComponent(slackUserId)}/r`;
+	async function refreshCurrentUser() {
+		const { data } = await supabase.auth.getUser();
+		user = data.user;
+		await loadAvatar(user);
 	}
 
 	onMount(() => {
@@ -59,8 +78,13 @@
 			data: { subscription }
 		} = supabase.auth.onAuthStateChange((_event, nextSession) => {
 			session = nextSession;
-			user = nextSession?.user ?? null;
-			void loadAvatar(user);
+			if (!nextSession) {
+				user = null;
+				avatarUrl = '';
+				return;
+			}
+
+			void refreshCurrentUser();
 		});
 
 		return () => subscription.unsubscribe();
@@ -68,6 +92,11 @@
 
 	async function signOut() {
 		await supabase.auth.signOut();
+	}
+
+	function handleAvatarError() {
+		if (!avatarUrl || avatarUrl.endsWith('/unknown/r')) return;
+		avatarUrl = fallbackAvatar;
 	}
 </script>
 
@@ -85,7 +114,8 @@
 				{#if avatarUrl}
 					<img
 						src={avatarUrl}
-								alt={user?.email ?? 'Signed in user'}
+						onerror={handleAvatarError}
+						alt={user?.email ?? 'Signed in user'}
 						class="h-9 w-9 rounded-full border border-slate-200 object-cover"
 					/>
 				{/if}
