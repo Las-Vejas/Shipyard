@@ -1,38 +1,96 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { Session, User } from '@supabase/supabase-js';
+	import type { Session, User, UserIdentity } from '@supabase/supabase-js';
 	import { supabase } from '$lib/supabaseClient';
 
 	let session = $state<Session | null>(null);
 	let user = $state<User | null>(null);
+	let identities = $state<UserIdentity[]>([]);
 	let avatarUrl = $state('');
 	const fallbackAvatar = 'https://cachet.dunkirk.sh/users/unknown/r';
+	const slackIdPattern = /^[UW][A-Z0-9]{7,}$/;
+
+	function getDirectAvatarUrl(currentUser: User) {
+		const metadata = currentUser.user_metadata ?? {};
+		const candidates = [
+			metadata.avatar_url,
+			metadata.picture,
+			metadata.image,
+			metadata.image_url,
+			metadata.profile_image
+		];
+
+		for (const candidate of candidates) {
+			if (typeof candidate === 'string' && candidate.startsWith('http')) {
+				return candidate;
+			}
+		}
+
+		return '';
+	}
 
 	function getMetadataSlackId(currentUser: User) {
 		const value = currentUser.user_metadata?.slack_id;
-		return typeof value === 'string' ? value : '';
+		if (typeof value === 'string' && value) return value;
+
+		const sub = currentUser.user_metadata?.sub;
+		if (typeof sub === 'string' && slackIdPattern.test(sub)) return sub;
+
+		return '';
 	}
 
-	function getSlackUserId(currentUser: User) {
+	function findSlackIdInIdentityData(data: Record<string, unknown> | undefined) {
+		if (!data) return '';
+
+		const priorityKeys = ['slack_id', 'slack_user_id', 'user_id', 'id', 'sub'];
+		for (const key of priorityKeys) {
+			const value = data[key];
+			if (typeof value === 'string' && (slackIdPattern.test(value) || key.includes('slack'))) {
+				return value;
+			}
+		}
+
+		for (const [key, value] of Object.entries(data)) {
+			if (typeof value === 'string' && key.toLowerCase().includes('slack') && value) {
+				return value;
+			}
+		}
+
+		return '';
+	}
+
+	function getSlackUserId(currentUser: User, linkedIdentities: UserIdentity[]) {
 		const metadataSlackId = getMetadataSlackId(currentUser);
 		if (metadataSlackId) return metadataSlackId;
 
-		const identity = currentUser.identities?.find((item) => {
+		const allIdentities = [...(currentUser.identities ?? []), ...linkedIdentities];
+		const identity = allIdentities.find((item) => {
 			const provider = item.provider.toLowerCase();
 			return provider === 'slack_oidc' || provider === 'slack' || provider === 'custom:hackclub';
 		});
 
-		return (
-			identity?.identity_data?.sub ??
-			identity?.identity_data?.user_id ??
-			identity?.identity_data?.id ??
-			currentUser.user_metadata?.slack_id ??
-			''
-		);
+		if (identity?.identity_data) {
+			return findSlackIdInIdentityData(identity.identity_data as Record<string, unknown>);
+		}
+
+		for (const item of allIdentities) {
+			const value = findSlackIdInIdentityData((item.identity_data ?? {}) as Record<string, unknown>);
+			if (value) return value;
+		}
+
+		return '';
 	}
 
-	async function loadAvatar(currentUser: User | null) {
-		const slackUserId = currentUser ? getSlackUserId(currentUser) : '';
+	async function loadAvatar(currentUser: User | null, linkedIdentities: UserIdentity[]) {
+		if (currentUser) {
+			const directAvatar = getDirectAvatarUrl(currentUser);
+			if (directAvatar) {
+				avatarUrl = directAvatar;
+				return;
+			}
+		}
+
+		const slackUserId = currentUser ? getSlackUserId(currentUser, linkedIdentities) : '';
 
 		if (!slackUserId) {
 			avatarUrl = '';
@@ -55,21 +113,28 @@
 	}
 
 	async function refreshCurrentUser() {
-		const { data } = await supabase.auth.getUser();
-		user = data.user;
-		await loadAvatar(user);
+		const [{ data: userData }, { data: identitiesData }] = await Promise.all([
+			supabase.auth.getUser(),
+			supabase.auth.getUserIdentities()
+		]);
+
+		user = userData.user;
+		identities = identitiesData?.identities ?? [];
+		await loadAvatar(user, identities);
 	}
 
 	onMount(() => {
 		const init = async () => {
-			const [{ data: sessionData }, { data: userData }] = await Promise.all([
+			const [{ data: sessionData }, { data: userData }, { data: identitiesData }] = await Promise.all([
 				supabase.auth.getSession(),
-				supabase.auth.getUser()
+				supabase.auth.getUser(),
+				supabase.auth.getUserIdentities()
 			]);
 
 			session = sessionData.session;
 			user = userData.user;
-			await loadAvatar(user);
+			identities = identitiesData?.identities ?? [];
+			await loadAvatar(user, identities);
 		};
 
 		void init();
@@ -80,6 +145,7 @@
 			session = nextSession;
 			if (!nextSession) {
 				user = null;
+				identities = [];
 				avatarUrl = '';
 				return;
 			}
